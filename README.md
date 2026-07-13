@@ -79,23 +79,62 @@ go run . export-model -assets assets -model models\soul_ocr_model.gob
 
 ## Output
 
-The command writes JSON to stdout. Each image contains a `souls` array with:
+The command writes versioned JSON to stdout:
 
-- `index`: order of the soul in the visible result grid.
-- `position`: soul position, from 1 to 6. This is the soul's own position and is
-  independent from `index`.
-- `initial_level` / `final_level`: level before and after enhancement. The level
-  reader supports any level from 0 through 15, including two-digit values.
-- `main_attribute`: main stat before and after enhancement.
-- `sub_attribute_count`: number of sub stats detected.
-- `sub_attributes`: sub stats before and after enhancement.
-- `upgraded_attributes`: all changed or newly added sub stats. Newly added stats
-  use `"0"` as `initial_value`. It is omitted when no sub stat changed.
-- `final_attributes`: final complete stat list.
+```json
+{
+  "schema_version": 2,
+  "results": [
+    {
+      "image": "assets/MuMu-20260708-142607-072.png",
+      "souls": [
+        {
+          "order": 1,
+          "position": 6,
+          "level": {
+            "initial": 0,
+            "final": 3
+          },
+          "attributes": {
+            "main": {
+              "name": "防御加成",
+              "initial": "10.00%",
+              "final": "19.00%"
+            },
+            "subs": [
+              {
+                "name": "防御加成",
+                "initial": "2.56%",
+                "final": "5.26%"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+- `schema_version`: output schema version, currently `2`.
+- `results`: recognition results grouped by input image.
+- `order`: order of the soul in the visible result grid.
+- `position`: soul position, from 1 to 6. It is independent from `order`.
+- `level.initial` / `level.final`: level before and after enhancement. Levels
+  from 0 through 15 are supported, including two-digit values.
+- `attributes.main`: the main stat before and after enhancement.
+- `attributes.subs`: the complete sub-stat list, with each attribute stored only
+  once. Its array length is the sub-stat count.
+- `initial: null`: the sub stat was newly added during enhancement.
+
+Consumers can derive changed attributes by comparing `initial` with `final`,
+and can read the complete final stat set directly from each attribute's `final`
+value. The output no longer duplicates attributes into separate upgraded and
+final-stat collections.
 
 When a soul did not level up, missing gold final values are filled with the
 initial value. For example, `Lv.3 -> Lv.3` with a main stat of `19.00%` outputs
-`final_value: "19.00%"`, not an empty value.
+`final: "19.00%"`, not an empty value.
 
 ## Verification
 

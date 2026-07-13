@@ -60,11 +60,8 @@ func TestFocusedEnhancedRecognitionScenarios(t *testing.T) {
 			t.Fatalf("soul %d position: want %d, got %d", i+1, i+1, soul.Position)
 		}
 	}
-	if souls[0].SubAttributes[3].InitialValue != "0" {
-		t.Fatalf("new attribute initial value: want 0, got %q", souls[0].SubAttributes[3].InitialValue)
-	}
-	if len(souls[0].UpgradedAttributes) != 1 || souls[0].UpgradedAttributes[0].Name != "暴击" {
-		t.Fatalf("new attribute should be included in upgraded_attributes: %#v", souls[0].UpgradedAttributes)
+	if souls[0].Attributes.Subs[3].Initial != nil {
+		t.Fatalf("new attribute initial value: want nil, got %q", *souls[0].Attributes.Subs[3].Initial)
 	}
 
 	img, err = loadPNG(filepath.Join("assets", "MuMu-20260708-154000-143.png"))
@@ -75,18 +72,15 @@ func TestFocusedEnhancedRecognitionScenarios(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if souls[0].InitialLevel != 3 || souls[0].FinalLevel != 12 {
-		t.Fatalf("first soul level: want 3 -> 12, got %d -> %d", souls[0].InitialLevel, souls[0].FinalLevel)
+	if souls[0].Level.Initial != 3 || souls[0].Level.Final != 12 {
+		t.Fatalf("first soul level: want 3 -> 12, got %d -> %d", souls[0].Level.Initial, souls[0].Level.Final)
 	}
 	last := souls[5]
-	if last.InitialLevel != 3 || last.FinalLevel != 3 {
-		t.Fatalf("last soul level: want 3 -> 3, got %d -> %d", last.InitialLevel, last.FinalLevel)
+	if last.Level.Initial != 3 || last.Level.Final != 3 {
+		t.Fatalf("last soul level: want 3 -> 3, got %d -> %d", last.Level.Initial, last.Level.Final)
 	}
-	if last.MainAttribute.FinalValue != "19.00%" || last.MainAttribute.Upgraded {
-		t.Fatalf("unupgraded main final/upgraded mismatch: %#v", last.MainAttribute)
-	}
-	if len(last.UpgradedAttributes) != 0 {
-		t.Fatalf("unupgraded soul should not expose upgraded attributes: %#v", last.UpgradedAttributes)
+	if last.Attributes.Main.Final != "19.00%" || *last.Attributes.Main.Initial != last.Attributes.Main.Final {
+		t.Fatalf("unupgraded main initial/final mismatch: %#v", last.Attributes.Main)
 	}
 }
 
@@ -115,7 +109,7 @@ func TestExportedModelCanBeLoadedForRecognition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(souls) != 6 || souls[0].FinalLevel != 12 || souls[5].MainAttribute.FinalValue != "19.00%" {
+	if len(souls) != 6 || souls[0].Level.Final != 12 || souls[5].Attributes.Main.Final != "19.00%" {
 		t.Fatalf("loaded model recognition mismatch: %#v", souls)
 	}
 }
@@ -144,7 +138,7 @@ func TestEmbeddedModelCanBeLoadedForRecognition(t *testing.T) {
 	}
 }
 
-func TestJSONOutputDoesNotContainSingularUpgradedAttribute(t *testing.T) {
+func TestJSONOutputUsesCompactSchema(t *testing.T) {
 	model, err := LoadEmbeddedTemplateModel()
 	if err != nil {
 		t.Fatal(err)
@@ -161,16 +155,28 @@ func TestJSONOutputDoesNotContainSingularUpgradedAttribute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := json.Marshal(souls)
+	data, err := json.Marshal(RecognitionOutput{
+		SchemaVersion: 2,
+		Results:       []ImageResult{{Image: "sample.png", Souls: souls}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	output := string(data)
-	if strings.Contains(output, `"upgraded_attribute"`) {
-		t.Fatalf("JSON should only expose upgraded_attributes, got %s", output)
+	for _, redundant := range []string{
+		`"sub_attribute_count"`,
+		`"upgraded_attributes"`,
+		`"final_attributes"`,
+		`"upgraded"`,
+	} {
+		if strings.Contains(output, redundant) {
+			t.Fatalf("JSON should not expose redundant field %s, got %s", redundant, output)
+		}
 	}
-	if !strings.Contains(output, `"upgraded_attributes"`) {
-		t.Fatalf("JSON should expose upgraded_attributes, got %s", output)
+	for _, required := range []string{`"schema_version":2`, `"results"`, `"level"`, `"attributes"`, `"initial":null`} {
+		if !strings.Contains(output, required) {
+			t.Fatalf("JSON should expose %s, got %s", required, output)
+		}
 	}
 }
 
@@ -229,40 +235,26 @@ func TestRecognizePositionalInputRules(t *testing.T) {
 func expectedByFile() map[string][]SoulResult {
 	out := map[string][]SoulResult{}
 	for _, sample := range trainingSet {
-		main := AttributeValue{Name: sample.Main.Name, InitialValue: sample.Main.Init, FinalValue: sample.Main.Final, Upgraded: sample.Main.Init != sample.Main.Final}
+		main := AttributeValue{Name: sample.Main.Name, Initial: stringPointer(sample.Main.Init), Final: sample.Main.Final}
 		subs := make([]AttributeValue, 0, len(sample.Subs))
-		upgradedAttrs := []AttributeValue{}
 		for _, sub := range sample.Subs {
 			final := sub.Final
 			if final == "" {
 				final = sub.Init
 			}
-			init := sub.Init
-			if sub.New {
-				init = "0"
+			var initial *string
+			if !sub.New {
+				initial = stringPointer(sub.Init)
 			}
-			attr := AttributeValue{Name: sub.Name, InitialValue: init, FinalValue: final, Upgraded: sub.Final != "" || sub.New}
-			subs = append(subs, attr)
-			if attr.Upgraded {
-				upgradedAttrs = append(upgradedAttrs, attr)
-			}
-		}
-		finalSubs := make([]AttributeValue, len(subs))
-		for i, sub := range subs {
-			finalSubs[i] = AttributeValue{Name: sub.Name, FinalValue: sub.FinalValue, Upgraded: sub.Upgraded}
+			subs = append(subs, AttributeValue{Name: sub.Name, Initial: initial, Final: final})
 		}
 		out[sample.File] = append(out[sample.File], SoulResult{
-			Index:              len(out[sample.File]) + 1,
-			Position:           sample.Position,
-			InitialLevel:       sample.InitialLevel,
-			FinalLevel:         sample.FinalLevel,
-			MainAttribute:      main,
-			SubAttributeCount:  len(subs),
-			SubAttributes:      subs,
-			UpgradedAttributes: upgradedAttrs,
-			FinalAttributes: FinalAttributes{
-				Main: AttributeValue{Name: main.Name, FinalValue: main.FinalValue, Upgraded: main.Upgraded},
-				Subs: finalSubs,
+			Order:    len(out[sample.File]) + 1,
+			Position: sample.Position,
+			Level:    LevelRange{Initial: sample.InitialLevel, Final: sample.FinalLevel},
+			Attributes: Attributes{
+				Main: main,
+				Subs: subs,
 			},
 		})
 	}

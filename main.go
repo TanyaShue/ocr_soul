@@ -29,25 +29,24 @@ const (
 )
 
 type SoulResult struct {
-	Index              int              `json:"index"`
-	Position           int              `json:"position"`
-	InitialLevel       int              `json:"initial_level"`
-	FinalLevel         int              `json:"final_level"`
-	MainAttribute      AttributeValue   `json:"main_attribute"`
-	SubAttributeCount  int              `json:"sub_attribute_count"`
-	SubAttributes      []AttributeValue `json:"sub_attributes"`
-	UpgradedAttributes []AttributeValue `json:"upgraded_attributes,omitempty"`
-	FinalAttributes    FinalAttributes  `json:"final_attributes"`
+	Order      int        `json:"order"`
+	Position   int        `json:"position"`
+	Level      LevelRange `json:"level"`
+	Attributes Attributes `json:"attributes"`
 }
 
 type AttributeValue struct {
-	Name         string `json:"name"`
-	InitialValue string `json:"initial_value,omitempty"`
-	FinalValue   string `json:"final_value"`
-	Upgraded     bool   `json:"upgraded,omitempty"`
+	Name    string  `json:"name"`
+	Initial *string `json:"initial"`
+	Final   string  `json:"final"`
 }
 
-type FinalAttributes struct {
+type LevelRange struct {
+	Initial int `json:"initial"`
+	Final   int `json:"final"`
+}
+
+type Attributes struct {
 	Main AttributeValue   `json:"main"`
 	Subs []AttributeValue `json:"subs"`
 }
@@ -55,6 +54,11 @@ type FinalAttributes struct {
 type ImageResult struct {
 	Image string       `json:"image"`
 	Souls []SoulResult `json:"souls"`
+}
+
+type RecognitionOutput struct {
+	SchemaVersion int           `json:"schema_version"`
+	Results       []ImageResult `json:"results"`
 }
 
 type Point struct {
@@ -328,7 +332,7 @@ func runRecognize(args []string) error {
 	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	return enc.Encode(results)
+	return enc.Encode(RecognitionOutput{SchemaVersion: 2, Results: results})
 }
 
 func newRecognizeFlagSet(out io.Writer) (*flag.FlagSet, *string, *string) {
@@ -694,9 +698,8 @@ func (r *Recognizer) Recognize(img image.Image) ([]SoulResult, error) {
 		if mainFinal == "" {
 			mainFinal = mainInit
 		}
-		main := AttributeValue{Name: mainName, InitialValue: mainInit, FinalValue: mainFinal, Upgraded: mainInit != mainFinal}
+		main := AttributeValue{Name: mainName, Initial: stringPointer(mainInit), Final: mainFinal}
 		subs := []AttributeValue{}
-		upgradedAttributes := []AttributeValue{}
 		for row := 1; row <= 4; row++ {
 			rr := rowRect(img.Bounds(), slot, row)
 			labelCrop := crop(img, labelRect(rr))
@@ -708,41 +711,34 @@ func (r *Recognizer) Recognize(img image.Image) ([]SoulResult, error) {
 			finalValue := initValue
 			finalCandidate := normalizeAttributeValue(name, r.recognizeValue(crop(img, finalValueRect(rr)), "gold"))
 			isNew := hasNewMarker(img, rr)
-			if isNew {
-				initValue = "0"
-			}
 			isUpgraded := isNew || (finalCandidate != "" && finalCandidate != initValue)
 			if isUpgraded {
 				if finalCandidate != "" {
 					finalValue = finalCandidate
 				}
 			}
-			attr := AttributeValue{Name: name, InitialValue: initValue, FinalValue: finalValue, Upgraded: isUpgraded}
-			subs = append(subs, attr)
-			if isUpgraded {
-				upgradedAttributes = append(upgradedAttributes, attr)
+			var initial *string
+			if !isNew {
+				initial = stringPointer(initValue)
 			}
-		}
-		finalSubs := make([]AttributeValue, len(subs))
-		for j, sub := range subs {
-			finalSubs[j] = AttributeValue{Name: sub.Name, FinalValue: sub.FinalValue, Upgraded: sub.Upgraded}
+			attr := AttributeValue{Name: name, Initial: initial, Final: finalValue}
+			subs = append(subs, attr)
 		}
 		results = append(results, SoulResult{
-			Index:              len(results) + 1,
-			Position:           position,
-			InitialLevel:       initialLevel,
-			FinalLevel:         finalLevel,
-			MainAttribute:      main,
-			SubAttributeCount:  len(subs),
-			SubAttributes:      subs,
-			UpgradedAttributes: upgradedAttributes,
-			FinalAttributes: FinalAttributes{
-				Main: AttributeValue{Name: main.Name, FinalValue: main.FinalValue, Upgraded: main.Upgraded},
-				Subs: finalSubs,
+			Order:    len(results) + 1,
+			Position: position,
+			Level:    LevelRange{Initial: initialLevel, Final: finalLevel},
+			Attributes: Attributes{
+				Main: main,
+				Subs: subs,
 			},
 		})
 	}
 	return results, nil
+}
+
+func stringPointer(value string) *string {
+	return &value
 }
 
 func scaleSlot(bounds image.Rectangle, slotNum int) Point {
