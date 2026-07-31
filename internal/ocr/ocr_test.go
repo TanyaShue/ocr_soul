@@ -48,3 +48,26 @@ func TestDecodeTemplateModel(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSelectedModelAndRecognition(t *testing.T) {
+	root := filepath.Join("..", "..")
+	model, err := LoadTemplateModel(filepath.Join(root, "recognize", "models", "selected_soul_ocr_model.gob"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recognizer, err := NewRecognizer(model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := LoadPNG(filepath.Join(root, "train", "assets", "selected", "MuMu-20260731-100340-830.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := recognizer.RecognizeSelected(img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Type != "招财猫" || got.Level != 3 || got.Attributes.Main.Name != "防御加成" || got.Attributes.Main.Value != "19.00%" || len(got.Attributes.Subs) != 4 {
+		t.Fatalf("unexpected selected soul: %+v", got)
+	}
+}

@@ -24,6 +24,23 @@ type SoulResult struct {
 	Attributes Attributes `json:"attributes"`
 }
 
+type SelectedSoulResult struct {
+	Type       string             `json:"type"`
+	Position   int                `json:"position"`
+	Level      int                `json:"level"`
+	Attributes SelectedAttributes `json:"attributes"`
+}
+
+type SelectedAttributeValue struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+type SelectedAttributes struct {
+	Main SelectedAttributeValue   `json:"main"`
+	Subs []SelectedAttributeValue `json:"subs"`
+}
+
 type AttributeValue struct {
 	Name    string  `json:"name"`
 	Initial *string `json:"initial"`
@@ -41,8 +58,9 @@ type Attributes struct {
 }
 
 type ImageResult struct {
-	Image string       `json:"image"`
-	Souls []SoulResult `json:"souls"`
+	Image        string              `json:"image"`
+	Souls        []SoulResult        `json:"souls,omitempty"`
+	SelectedSoul *SelectedSoulResult `json:"selected_soul,omitempty"`
 }
 
 type RecognitionOutput struct {
@@ -99,6 +117,7 @@ type SoulTypeTemplate struct {
 
 type TemplateModel struct {
 	Version           int
+	Kind              string
 	LabelTemplates    []LabelTemplate
 	DigitTemplates    []DigitTemplate
 	PositionTemplates []PositionTemplate
@@ -265,7 +284,7 @@ func validateTemplateModel(model *TemplateModel, seenLabels map[string]bool) err
 			return errors.New("not enough attribute label templates in model")
 		}
 	}
-	if len(model.PositionTemplates) < 6 {
+	if model.Kind != "selected" && len(model.PositionTemplates) < 6 {
 		return errors.New("not enough position templates in model")
 	}
 	if len(model.SoulTypeTemplates) == 0 {
@@ -284,6 +303,44 @@ func validateTemplateModel(model *TemplateModel, seenLabels map[string]bool) err
 		}
 	}
 	return nil
+}
+
+func (m *TemplateModel) LearnSelectedIntegerDigits(img image.Image, rect Rect, value int) {
+	text := fmt.Sprintf("%d", value)
+	comps := selectedLevelComponents(crop(img, rect))
+	if len(comps) < len(text) {
+		return
+	}
+	comps = comps[len(comps)-len(text):]
+	for i, ch := range text {
+		m.DigitTemplates = append(m.DigitTemplates, DigitTemplate{Char: ch, Mask: normalizeMask(comps[i].Mask, 12, 18)})
+	}
+}
+
+func (m *TemplateModel) LearnSelectedValueDigits(img image.Image, rect Rect, text string) {
+	comps := selectedValueComponents(crop(img, rect))
+	digits := digitRunes(text)
+	dot := findDot(comps)
+	if len(digits) == 0 || dot < 0 {
+		return
+	}
+	beforeCount := strings.IndexRune(text, '.')
+	before := componentsBefore(comps, comps[dot])
+	after := componentsAfter(comps, comps[dot])
+	if len(before) > 0 {
+		before = before[1:]
+	}
+	if beforeCount < 1 || len(before) < beforeCount || len(after) < 2 {
+		return
+	}
+	selected := append([]Component{}, before[len(before)-beforeCount:]...)
+	selected = append(selected, after[:2]...)
+	if len(selected) != len(digits) {
+		return
+	}
+	for i, ch := range digits {
+		m.DigitTemplates = append(m.DigitTemplates, DigitTemplate{Char: ch, Mask: normalizeMask(selected[i].Mask, 12, 18)})
+	}
 }
 
 func (m *TemplateModel) LearnIntegerDigits(img image.Image, rect Rect, value int) {
@@ -320,6 +377,9 @@ func (m *TemplateModel) LearnValueDigits(img image.Image, slot Point, row int, i
 	afterCount := 2
 	before := componentsBefore(comps, comps[dot])
 	after := componentsAfter(comps, comps[dot])
+	if len(before) > 1 && before[0].X0 < 25 {
+		before = before[1:]
+	}
 	if len(before) < beforeCount || len(after) < afterCount {
 		return
 	}
@@ -403,6 +463,84 @@ func (r *Recognizer) Recognize(img image.Image) ([]SoulResult, error) {
 	return results, nil
 }
 
+var selectedRows = []Rect{
+	{604, 304, 894, 337},
+	{604, 337, 894, 370},
+	{604, 370, 894, 403},
+	{604, 403, 894, 436},
+	{604, 436, 894, 469},
+}
+
+func SelectedHeaderRect(bounds image.Rectangle) Rect {
+	return scaleRect(bounds, Rect{680, 216, 892, 292})
+}
+func SelectedIconRect(bounds image.Rectangle) Rect {
+	return scaleRect(bounds, Rect{606, 219, 678, 291})
+}
+func SelectedPositionImageMask(img image.Image) BinaryImage {
+	return positionColorMask(crop(img, scaleRect(img.Bounds(), Rect{584, 207, 704, 317})))
+}
+func SelectedRowRect(bounds image.Rectangle, row int) Rect {
+	return scaleRect(bounds, selectedRows[row])
+}
+func SelectedLabelImage(img image.Image, row Rect) image.Image {
+	return crop(img, selectedLabelRect(row))
+}
+func SelectedLabelImageMask(img image.Image) BinaryImage { return selectedTextMask(img) }
+func SelectedValueRect(row Rect) Rect                    { return selectedValueRect(row) }
+
+func (r *Recognizer) RecognizeSelected(img image.Image) (*SelectedSoulResult, error) {
+	mainRow := SelectedRowRect(img.Bounds(), 0)
+	mainName := r.recognizeSelectedLabel(crop(img, selectedLabelRect(mainRow)))
+	mainValue := normalizeAttributeValue(mainName, r.recognizeSelectedValue(crop(img, selectedValueRect(mainRow))))
+	level := r.recognizeSelectedInteger(crop(img, SelectedHeaderRect(img.Bounds())))
+	if expected := selectedMainValue(mainName, level); expected != "" {
+		mainValue = expected
+	}
+	result := &SelectedSoulResult{
+		Type:       r.recognizeSoulTypeFromRect(img, SelectedIconRect(img.Bounds())),
+		Position:   r.recognizePositionMask(SelectedPositionImageMask(img)),
+		Level:      level,
+		Attributes: SelectedAttributes{Main: SelectedAttributeValue{Name: mainName, Value: mainValue}},
+	}
+	for row := 1; row <= 4; row++ {
+		rr := SelectedRowRect(img.Bounds(), row)
+		if !hasSelectedValueMarker(img, rr) {
+			continue
+		}
+		label := crop(img, selectedLabelRect(rr))
+		if selectedTextMask(label).Count() < 12 {
+			continue
+		}
+		name := r.recognizeSelectedLabel(label)
+		value := normalizeAttributeValue(name, r.recognizeSelectedValue(crop(img, selectedValueRect(rr))))
+		if value == "" {
+			continue
+		}
+		result.Attributes.Subs = append(result.Attributes.Subs, SelectedAttributeValue{Name: name, Value: value})
+	}
+	return result, nil
+}
+
+func selectedMainValue(name string, level int) string {
+	switch name {
+	case "攻击":
+		return fmt.Sprintf("%d.00", 81+27*level)
+	case "生命":
+		return fmt.Sprintf("%d.00", 342+114*level)
+	case "防御":
+		return fmt.Sprintf("%d.00", 14+6*level)
+	case "攻击加成", "生命加成", "防御加成", "暴击", "效果命中", "效果抵抗":
+		return fmt.Sprintf("%d.00%%", 10+3*level)
+	case "暴击伤害":
+		return fmt.Sprintf("%d.00%%", 14+5*level)
+	case "速度":
+		return fmt.Sprintf("%d.00", 12+3*level)
+	default:
+		return ""
+	}
+}
+
 const soulTemplateSize = 32
 
 // SoulTypeTemplatesFromImage creates shifted variants so hand-cropped samples do
@@ -424,10 +562,14 @@ func SoulTypeTemplatesFromImage(name string, img image.Image) []SoulTypeTemplate
 }
 
 func (r *Recognizer) recognizeSoulType(img image.Image, slot Point) string {
+	return r.recognizeSoulTypeFromRect(img, soulIconRect(img.Bounds(), slot))
+}
+
+func (r *Recognizer) recognizeSoulTypeFromRect(img image.Image, rect Rect) string {
 	bestName := ""
 	bestScore := math.MaxFloat64
 	step := max(1, scale(3, img.Bounds().Dx(), 1280))
-	icon := crop(img, soulIconRect(img.Bounds(), slot))
+	icon := crop(img, rect)
 	for _, scalePercent := range []int{90, 100, 110} {
 		for _, dy := range []int{-step, 0, step} {
 			for _, dx := range []int{-step, 0, step} {
@@ -443,6 +585,27 @@ func (r *Recognizer) recognizeSoulType(img image.Image, slot Point) string {
 		}
 	}
 	return bestName
+}
+
+func scaleRect(bounds image.Rectangle, rect Rect) Rect {
+	return Rect{
+		X0: scale(rect.X0, bounds.Dx(), 1280),
+		Y0: scale(rect.Y0, bounds.Dy(), 720),
+		X1: scale(rect.X1, bounds.Dx(), 1280),
+		Y1: scale(rect.Y1, bounds.Dy(), 720),
+	}
+}
+
+func selectedLabelRect(row Rect) Rect {
+	return Rect{X0: row.X0, Y0: row.Y0, X1: row.X0 + (row.X1-row.X0)*53/100, Y1: row.Y1}
+}
+
+func selectedValueRect(row Rect) Rect {
+	return Rect{X0: row.X0 + (row.X1-row.X0)*65/100, Y0: row.Y0, X1: row.X1, Y1: row.Y1}
+}
+
+func hasSelectedValueMarker(img image.Image, row Rect) bool {
+	return findDot(selectedValueComponents(crop(img, selectedValueRect(row)))) >= 0
 }
 
 func stringPointer(value string) *string {
@@ -643,18 +806,95 @@ func (r *Recognizer) recognizeLabel(img image.Image) string {
 	return bestName
 }
 
+func (r *Recognizer) recognizeSelectedLabel(img image.Image) string {
+	mask := selectedTextMask(img)
+	bestName := ""
+	bestScore := math.MaxFloat64
+	for _, tmpl := range r.LabelTemplates {
+		score := maskDistance(mask, tmpl.Mask)
+		if score < bestScore {
+			bestScore = score
+			bestName = tmpl.Name
+		}
+	}
+	return bestName
+}
+
+func (r *Recognizer) recognizeSelectedInteger(img image.Image) int {
+	comps := selectedLevelComponents(img)
+	if len(comps) == 0 {
+		return 0
+	}
+	value := 0
+	for _, comp := range comps {
+		value = value*10 + int(r.recognizeDigit(comp.Mask)-'0')
+	}
+	return value
+}
+
+func (r *Recognizer) recognizeSelectedValue(img image.Image) string {
+	comps := selectedValueComponents(img)
+	dot := findDot(comps)
+	if dot < 0 {
+		return ""
+	}
+	before := componentsBefore(comps, comps[dot])
+	after := componentsAfter(comps, comps[dot])
+	if len(before) > 0 {
+		before = before[1:]
+	}
+	if len(before) == 0 || len(after) < 2 {
+		return ""
+	}
+	intPart := ""
+	for _, comp := range before {
+		intPart += string(r.recognizeDigit(comp.Mask))
+	}
+	out := fmt.Sprintf("%s.%c%c", intPart, r.recognizeDigit(after[0].Mask), r.recognizeDigit(after[1].Mask))
+	if hasTrailingPercent(after[1], after[2:]) {
+		out += "%"
+	}
+	return out
+}
+
 func (r *Recognizer) recognizePosition(img image.Image, slot Point) int {
-	mask := positionMask(img, slot)
+	return r.recognizePositionMask(positionMask(img, slot))
+}
+
+func (r *Recognizer) recognizePositionMask(mask BinaryImage) int {
+	mask = positionFeatureMask(mask)
 	bestPosition := 0
 	bestScore := math.MaxFloat64
 	for _, tmpl := range r.PositionTemplates {
-		score := maskDistance(mask, tmpl.Mask)
+		score := maskDistance(mask, positionFeatureMask(tmpl.Mask))
+		if tmpl.Position == 6 {
+			score *= 0.92
+		}
 		if score < bestScore {
 			bestScore = score
 			bestPosition = tmpl.Position
 		}
 	}
 	return bestPosition
+}
+
+// Keep only the outer border/尖角 geometry; icon artwork and fill colors must not affect slot detection.
+func positionFeatureMask(src BinaryImage) BinaryImage {
+	dst := BinaryImage{W: src.W, H: src.H, P: make([]bool, len(src.P))}
+	cx, cy := float64(src.W)/2, float64(src.H)/2
+	for y := 0; y < src.H; y++ {
+		for x := 0; x < src.W; x++ {
+			if !src.P[y*src.W+x] {
+				continue
+			}
+			dx, dy := float64(x)-cx, float64(y)-cy
+			d := math.Hypot(dx, dy)
+			if d > float64(min(src.W, src.H))*0.30 {
+				dst.P[y*src.W+x] = true
+			}
+		}
+	}
+	return dst
 }
 
 func (r *Recognizer) recognizeInteger(img image.Image, maskKind string) int {
@@ -885,8 +1125,94 @@ func integerComponents(img image.Image, maskKind string) []Component {
 	return filtered
 }
 
+func selectedIntegerComponents(img image.Image) []Component {
+	comps := connectedComponents(selectedTextMask(img))
+	filtered := comps[:0]
+	for _, comp := range comps {
+		w := comp.X1 - comp.X0
+		h := comp.Y1 - comp.Y0
+		if comp.Area < 8 || h < 8 || w > 15 || h > 28 || isPlusComponent(comp) {
+			continue
+		}
+		filtered = append(filtered, comp)
+	}
+	sortComponents(filtered)
+	return filtered
+}
+
+func selectedLevelComponents(img image.Image) []Component {
+	all := connectedComponents(selectedTextMask(img))
+	sortComponents(all)
+	plusX := -1
+	for _, comp := range all {
+		if isPlusComponent(comp) {
+			plusX = comp.X1
+		}
+	}
+	if plusX < 0 {
+		return nil
+	}
+	var digits []Component
+	for _, comp := range selectedIntegerComponents(img) {
+		if comp.X0 >= plusX-1 {
+			digits = append(digits, comp)
+		}
+	}
+	return digits
+}
+
+func isPlusComponent(comp Component) bool {
+	w := comp.X1 - comp.X0
+	h := comp.Y1 - comp.Y0
+	if w < 7 || h < 7 || w > 18 || h > 18 {
+		return false
+	}
+	if comp.Area > 40 {
+		return false
+	}
+	horizontal := 0
+	vertical := 0
+	for y := 0; y < comp.Mask.H; y++ {
+		count := 0
+		for x := 0; x < comp.Mask.W; x++ {
+			if comp.Mask.P[y*comp.Mask.W+x] {
+				count++
+			}
+		}
+		horizontal = max(horizontal, count)
+	}
+	for x := 0; x < comp.Mask.W; x++ {
+		count := 0
+		for y := 0; y < comp.Mask.H; y++ {
+			if comp.Mask.P[y*comp.Mask.W+x] {
+				count++
+			}
+		}
+		vertical = max(vertical, count)
+	}
+	return horizontal*100/comp.Mask.W >= 65 && vertical*100/comp.Mask.H >= 65
+}
+
+func selectedValueComponents(img image.Image) []Component {
+	comps := splitWideDigitComponents(connectedComponents(selectedTextMask(img)))
+	filtered := comps[:0]
+	for _, comp := range comps {
+		h := comp.Y1 - comp.Y0
+		if comp.Area < 3 || h < 2 {
+			continue
+		}
+		filtered = append(filtered, comp)
+	}
+	sortComponents(filtered)
+	return filtered
+}
+
 func positionMask(img image.Image, slot Point) BinaryImage {
-	return makeMask(crop(img, positionRect(img.Bounds(), slot)), func(c color.Color) bool {
+	return positionColorMask(crop(img, positionRect(img.Bounds(), slot)))
+}
+
+func positionColorMask(img image.Image) BinaryImage {
+	return makeMask(img, func(c color.Color) bool {
 		r, g, b := rgb(c)
 		return r > 165 && g > 110 && b < 105 && r > g && g > b+25
 	})
@@ -910,6 +1236,15 @@ func labelMask(img image.Image) BinaryImage {
 	return makeMask(img, func(c color.Color) bool {
 		r, g, b := rgb(c)
 		return r > 110 && g > 100 && b > 80 && max3(r, g, b)-min3(r, g, b) < 110 && !isGoldRGB(r, g, b)
+	})
+}
+
+func selectedTextMask(img image.Image) BinaryImage {
+	return makeMask(img, func(c color.Color) bool {
+		r, g, b := rgb(c)
+		dark := r < 145 && g < 130 && b < 115
+		red := r > 135 && g < 115 && b < 90 && r > g+35
+		return dark || red
 	})
 }
 

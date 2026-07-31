@@ -1,6 +1,11 @@
 # ocr_soul
 
-Go model trainer and command-line recognizer for Onmyoji soul enhancement result screenshots.
+Go model trainer and command-line recognizer for Onmyoji soul screenshots.
+
+Two independently trainable recognition types are available:
+
+- `upgrade`: the original enhancement-result grid.
+- `selected`: the currently selected soul detail panel.
 
 The two programs are separated by responsibility:
 
@@ -34,8 +39,8 @@ go build -o recognize.exe .\recognize
 
 | Command | Purpose | Parameters |
 | --- | --- | --- |
-| `recognize/` | Load a template model, recognize a PNG file or every PNG in a directory, and write JSON to stdout. | `-input <file-or-dir>`: input PNG or directory, default `test`.<br>`-model <file>`: optional template model path; empty value uses the embedded model. |
-| `train/` | Rebuild the Go template model from labelled screenshots. | `-assets <dir>`: labelled screenshot directory, default `train\assets`.<br>`-model <file>`: output model path, default `recognize\models\soul_ocr_model.gob`. |
+| `recognize/` | Load a template model, recognize a PNG file or every PNG in a directory, and write JSON to stdout. | `-type upgrade\|selected`: recognition type, default `upgrade`.<br>`-input <file-or-dir>`: input PNG or directory, default `test`.<br>`-model <file>`: optional template model path; empty value uses the matching embedded model. |
+| `train/` | Rebuild one Go template model from its labelled screenshots. | `-type upgrade\|selected`: model type, default `upgrade`.<br>`-assets <dir>`: training root, default `train\assets`.<br>`-model <file>`: optional output path; defaults to the matching file under `recognize\models`. |
 
 General forms:
 
@@ -73,6 +78,18 @@ Export a new Go template model from the labelled screenshots:
 ```powershell
 go run .\train -assets train\assets -model recognize\models\soul_ocr_model.gob
 ```
+
+Train and use the selected-soul model:
+
+```powershell
+go run .\train -type selected
+go run .\recognize -type selected -input train\assets\selected
+```
+
+The selected model inherits the complete soul-type catalogue from the upgrade
+model, then adds selected-panel samples. Its screenshots live under
+`train/assets/selected`, with labels in `train/selecteddata`, so either model can
+be improved independently.
 
 ## Output
 

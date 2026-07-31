@@ -2,6 +2,7 @@ package trainer
 
 import (
 	"fmt"
+	"image"
 	"os"
 	"path/filepath"
 	"sort"
@@ -25,6 +26,71 @@ type Attribute struct {
 	Init  string
 	Final string
 	New   bool
+}
+
+type SelectedSoul struct {
+	File     string
+	Type     string
+	Position int
+	Level    int
+	Main     SelectedAttribute
+	Subs     []SelectedAttribute
+}
+
+type SelectedAttribute struct {
+	Name  string
+	Value string
+}
+
+func TrainSelected(assetsDir string, samples []SelectedSoul, base *ocr.TemplateModel) (*ocr.TemplateModel, error) {
+	model := &ocr.TemplateModel{Version: 3, Kind: "selected"}
+	// Reuse the complete soul catalogue; selected screenshots only refine their own layout.
+	model.SoulTypeTemplates = append(model.SoulTypeTemplates, base.SoulTypeTemplates...)
+	seenLabels := map[string]bool{}
+	for _, sample := range samples {
+		imagePath := filepath.Join(assetsDir, sample.File)
+		if _, statErr := os.Stat(imagePath); statErr != nil {
+			imagePath = filepath.Join(filepath.Dir(filepath.Dir(filepath.Dir(assetsDir))), "test", sample.File)
+		}
+		img, err := ocr.LoadPNG(imagePath)
+		if err != nil {
+			return nil, fmt.Errorf("load selected training image %s: %w", sample.File, err)
+		}
+		if sample.Position > 0 {
+			model.PositionTemplates = append(model.PositionTemplates, ocr.PositionTemplate{Position: sample.Position, Mask: ocr.SelectedPositionImageMask(img)})
+		}
+		if sample.Level >= 0 {
+			model.LearnSelectedIntegerDigits(img, ocr.SelectedHeaderRect(img.Bounds()), sample.Level)
+		}
+		attrs := []SelectedAttribute{}
+		if sample.Main.Name != "" {
+			attrs = append(attrs, sample.Main)
+		}
+		attrs = append(attrs, sample.Subs...)
+		for row, attr := range attrs {
+			rr := ocr.SelectedRowRect(img.Bounds(), row)
+			mask := ocr.SelectedLabelImageMask(ocr.SelectedLabelImage(img, rr))
+			if mask.Count() > 0 {
+				model.LabelTemplates = append(model.LabelTemplates, ocr.LabelTemplate{Name: attr.Name, Mask: mask})
+				seenLabels[attr.Name] = true
+			}
+			model.LearnSelectedValueDigits(img, ocr.SelectedValueRect(rr), attr.Value)
+		}
+		if sample.Type != "" {
+			model.SoulTypeTemplates = append(model.SoulTypeTemplates, ocr.SoulTypeTemplatesFromImage(sample.Type, cropSelectedIcon(img))...)
+		}
+	}
+	if err := ocr.ValidateLearnedModel(model, seenLabels); err != nil {
+		return nil, err
+	}
+	return model, nil
+}
+
+func cropSelectedIcon(img image.Image) image.Image {
+	r := ocr.SelectedIconRect(img.Bounds())
+	return img.(interface {
+		SubImage(image.Rectangle) image.Image
+	}).SubImage(image.Rect(r.X0, r.Y0, r.X1, r.Y1))
 }
 
 func Train(assetsDir string, samples []Soul) (*ocr.TemplateModel, error) {
