@@ -18,6 +18,7 @@ import (
 
 type SoulResult struct {
 	Order      int        `json:"order"`
+	Type       string     `json:"type"`
 	Position   int        `json:"position"`
 	Level      LevelRange `json:"level"`
 	Attributes Attributes `json:"attributes"`
@@ -91,17 +92,24 @@ type PositionTemplate struct {
 	Mask     BinaryImage
 }
 
+type SoulTypeTemplate struct {
+	Name   string
+	Pixels []uint8
+}
+
 type TemplateModel struct {
 	Version           int
 	LabelTemplates    []LabelTemplate
 	DigitTemplates    []DigitTemplate
 	PositionTemplates []PositionTemplate
+	SoulTypeTemplates []SoulTypeTemplate
 }
 
 type Recognizer struct {
 	LabelTemplates    []LabelTemplate
 	DigitTemplates    []DigitTemplate
 	PositionTemplates []PositionTemplate
+	SoulTypeTemplates []SoulTypeTemplate
 }
 
 var slots = []Point{
@@ -205,6 +213,7 @@ func NewRecognizer(model *TemplateModel) (*Recognizer, error) {
 		LabelTemplates:    model.LabelTemplates,
 		DigitTemplates:    model.DigitTemplates,
 		PositionTemplates: model.PositionTemplates,
+		SoulTypeTemplates: model.SoulTypeTemplates,
 	}, nil
 }
 
@@ -258,6 +267,9 @@ func validateTemplateModel(model *TemplateModel, seenLabels map[string]bool) err
 	}
 	if len(model.PositionTemplates) < 6 {
 		return errors.New("not enough position templates in model")
+	}
+	if len(model.SoulTypeTemplates) == 0 {
+		return errors.New("no soul type templates in model")
 	}
 	for d := '0'; d <= '9'; d++ {
 		found := false
@@ -379,6 +391,7 @@ func (r *Recognizer) Recognize(img image.Image) ([]SoulResult, error) {
 		}
 		results = append(results, SoulResult{
 			Order:    len(results) + 1,
+			Type:     r.recognizeSoulType(img, slot),
 			Position: position,
 			Level:    LevelRange{Initial: initialLevel, Final: finalLevel},
 			Attributes: Attributes{
@@ -388,6 +401,48 @@ func (r *Recognizer) Recognize(img image.Image) ([]SoulResult, error) {
 		})
 	}
 	return results, nil
+}
+
+const soulTemplateSize = 32
+
+// SoulTypeTemplatesFromImage creates shifted variants so hand-cropped samples do
+// not need to have exactly the same size or center.
+func SoulTypeTemplatesFromImage(name string, img image.Image) []SoulTypeTemplate {
+	variants := make([]SoulTypeTemplate, 0, 27)
+	step := max(1, min(img.Bounds().Dx(), img.Bounds().Dy())/24)
+	for _, scalePercent := range []int{90, 100, 110} {
+		for _, dy := range []int{-step, 0, step} {
+			for _, dx := range []int{-step, 0, step} {
+				variants = append(variants, SoulTypeTemplate{
+					Name:   name,
+					Pixels: normalizedColorPixels(img, dx, dy, scalePercent),
+				})
+			}
+		}
+	}
+	return variants
+}
+
+func (r *Recognizer) recognizeSoulType(img image.Image, slot Point) string {
+	bestName := ""
+	bestScore := math.MaxFloat64
+	step := max(1, scale(3, img.Bounds().Dx(), 1280))
+	icon := crop(img, soulIconRect(img.Bounds(), slot))
+	for _, scalePercent := range []int{90, 100, 110} {
+		for _, dy := range []int{-step, 0, step} {
+			for _, dx := range []int{-step, 0, step} {
+				pixels := normalizedColorPixels(icon, dx, dy, scalePercent)
+				for _, tmpl := range r.SoulTypeTemplates {
+					score := colorDistance(pixels, tmpl.Pixels)
+					if score < bestScore {
+						bestScore = score
+						bestName = tmpl.Name
+					}
+				}
+			}
+		}
+	}
+	return bestName
 }
 
 func stringPointer(value string) *string {
@@ -454,6 +509,81 @@ func positionRect(bounds image.Rectangle, slot Point) Rect {
 		X1: slot.X + scale(95, bounds.Dx(), 1280),
 		Y1: slot.Y + scale(100, bounds.Dy(), 720),
 	}
+}
+
+func soulIconRect(bounds image.Rectangle, slot Point) Rect {
+	return Rect{
+		X0: slot.X + scale(8, bounds.Dx(), 1280),
+		Y0: slot.Y - scale(1, bounds.Dy(), 720),
+		X1: slot.X + scale(78, bounds.Dx(), 1280),
+		Y1: slot.Y + scale(69, bounds.Dy(), 720),
+	}
+}
+
+func normalizedColorPixels(img image.Image, offsetX, offsetY, scalePercent int) []uint8 {
+	b := img.Bounds()
+	side := min(b.Dx(), b.Dy())
+	margin := side / 20
+	side = (side - margin*2) * scalePercent / 100
+	cx := b.Min.X + b.Dx()/2 + offsetX
+	cy := b.Min.Y + b.Dy()/2 + offsetY
+	x0 := cx - side/2
+	y0 := cy - side/2
+	pixels := make([]uint8, soulTemplateSize*soulTemplateSize*3)
+	luminance := make([]float64, soulTemplateSize*soulTemplateSize)
+	var sum, sumSquares float64
+	for y := 0; y < soulTemplateSize; y++ {
+		sy := y0 + y*side/soulTemplateSize
+		sy = max(b.Min.Y, min(sy, b.Max.Y-1))
+		for x := 0; x < soulTemplateSize; x++ {
+			sx := x0 + x*side/soulTemplateSize
+			sx = max(b.Min.X, min(sx, b.Max.X-1))
+			r, g, blue := rgb(img.At(sx, sy))
+			i := (y*soulTemplateSize + x) * 3
+			lum := float64(r*3+g*6+blue) / 10
+			luminance[y*soulTemplateSize+x] = lum
+			sum += lum
+			sumSquares += lum * lum
+			pixels[i] = uint8(max(0, min(255, r-g+128)))
+			pixels[i+1] = uint8(max(0, min(255, blue-g+128)))
+		}
+	}
+	count := float64(len(luminance))
+	mean := sum / count
+	variance := max(1.0, sumSquares/count-mean*mean)
+	stddev := math.Sqrt(variance)
+	for i, lum := range luminance {
+		pixels[i*3+2] = uint8(max(0, min(255, int(math.Round((lum-mean)*40/stddev+128)))))
+	}
+	return pixels
+}
+
+func colorDistance(a, b []uint8) float64 {
+	if len(a) == 0 || len(a) != len(b) {
+		return math.MaxFloat64
+	}
+	var total, weightTotal float64
+	for i := 0; i < len(a); i += 3 {
+		pixel := i / 3
+		x := pixel % soulTemplateSize
+		y := pixel / soulTemplateSize
+		dx := float64(x) - float64(soulTemplateSize-1)/2
+		dy := float64(y) - float64(soulTemplateSize-1)/2
+		radius := math.Sqrt(dx*dx + dy*dy)
+		if radius > float64(soulTemplateSize)*0.38 {
+			continue
+		}
+		weight := 1.0
+		if radius > float64(soulTemplateSize)*0.31 {
+			weight = 0.35
+		}
+		d0 := float64(int(a[i]) - int(b[i]))
+		d1 := float64(int(a[i+1]) - int(b[i+1]))
+		d2 := float64(int(a[i+2]) - int(b[i+2]))
+		total += (d0*d0*0.7 + d1*d1*0.7 + d2*d2) * weight
+		weightTotal += weight
+	}
+	return total / weightTotal
 }
 
 func crop(img image.Image, r Rect) image.Image {

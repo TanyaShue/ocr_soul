@@ -53,7 +53,7 @@ func main() {
 
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(ocr.RecognitionOutput{SchemaVersion: 2, Results: results}); err != nil {
+	if err := encoder.Encode(ocr.RecognitionOutput{SchemaVersion: 3, Results: results}); err != nil {
 		fail(err)
 	}
 }

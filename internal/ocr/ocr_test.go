@@ -27,6 +27,15 @@ func TestLoadModelAndRecognize(t *testing.T) {
 	if len(souls) == 0 {
 		t.Fatal("want at least one recognized soul")
 	}
+	wantTypes := []string{"招财猫", "日女巳时", "珍珠", "油赤子", "青女房"}
+	if len(souls) != len(wantTypes) {
+		t.Fatalf("got %d souls, want %d", len(souls), len(wantTypes))
+	}
+	for i, want := range wantTypes {
+		if souls[i].Type != want {
+			t.Errorf("soul %d type = %q, want %q", i+1, souls[i].Type, want)
+		}
+	}
 }
 
 func TestDecodeTemplateModel(t *testing.T) {

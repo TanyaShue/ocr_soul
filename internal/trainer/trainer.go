@@ -2,7 +2,10 @@ package trainer
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	ocr "ocr_soul/internal/ocr"
 )
@@ -25,7 +28,7 @@ type Attribute struct {
 }
 
 func Train(assetsDir string, samples []Soul) (*ocr.TemplateModel, error) {
-	model := &ocr.TemplateModel{Version: 1}
+	model := &ocr.TemplateModel{Version: 2}
 	seenLabels := map[string]bool{}
 	for _, sample := range samples {
 		img, err := ocr.LoadPNG(filepath.Join(assetsDir, sample.File))
@@ -63,8 +66,46 @@ func Train(assetsDir string, samples []Soul) (*ocr.TemplateModel, error) {
 			}
 		}
 	}
+	if err := learnSoulTypes(model, filepath.Join(assetsDir, "soul")); err != nil {
+		return nil, err
+	}
 	if err := ocr.ValidateLearnedModel(model, seenLabels); err != nil {
 		return nil, err
 	}
 	return model, nil
+}
+
+func learnSoulTypes(model *ocr.TemplateModel, dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("read soul type samples: %w", err)
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".png") {
+			continue
+		}
+		name, err := soulTypeFromFilename(entry.Name())
+		if err != nil {
+			return err
+		}
+		img, err := ocr.LoadPNG(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			return fmt.Errorf("load soul type image %s: %w", entry.Name(), err)
+		}
+		model.SoulTypeTemplates = append(model.SoulTypeTemplates, ocr.SoulTypeTemplatesFromImage(name, img)...)
+	}
+	if len(model.SoulTypeTemplates) == 0 {
+		return fmt.Errorf("no PNG soul type samples found in %s", dir)
+	}
+	return nil
+}
+
+func soulTypeFromFilename(filename string) (string, error) {
+	base := strings.TrimSuffix(filename, filepath.Ext(filename))
+	index := strings.LastIndex(base, "_")
+	if index < 0 || index == len(base)-1 {
+		return "", fmt.Errorf("soul type filename must end in _<name>.png: %s", filename)
+	}
+	return base[index+1:], nil
 }

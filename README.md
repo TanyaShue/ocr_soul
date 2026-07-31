@@ -80,13 +80,14 @@ The command writes versioned JSON to stdout:
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "results": [
     {
       "image": "assets/MuMu-20260708-142607-072.png",
       "souls": [
         {
           "order": 1,
+          "type": "雪幽魂",
           "position": 6,
           "level": {
             "initial": 0,
@@ -113,9 +114,12 @@ The command writes versioned JSON to stdout:
 }
 ```
 
-- `schema_version`: output schema version, currently `2`.
+- `schema_version`: output schema version, currently `3`.
 - `results`: recognition results grouped by input image.
 - `order`: order of the soul in the visible result grid.
+- `type`: soul type recognized from the icon (for example `雪幽魂`). The
+  training filename is parsed only after its final `_`, so a prefix such as
+  `攻击加成_狂骨` labels the type as `狂骨`, independently of stat recognition.
 - `position`: soul position, from 1 to 6. It is independent from `order`.
 - `level.initial` / `level.final`: level before and after enhancement. Levels
   from 0 through 15 are supported, including two-digit values.
