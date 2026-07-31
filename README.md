@@ -1,80 +1,77 @@
 # ocr_soul
 
-Go command-line recognizer for Onmyoji soul enhancement result screenshots.
+Go model trainer and command-line recognizer for Onmyoji soul enhancement result screenshots.
+
+The two programs are separated by responsibility:
+
+- `train/`: only trains and exports the template model.
+- `recognize/`: only loads a model and recognizes PNG images.
+- `internal/ocr/`: shared model format and image-processing algorithms used by both programs.
 
 The recognizer is tuned for the 1280x720 enhancement result UI shown in the
-sample screenshots under `assets`. It does not depend on the inaccurate OCR
+sample screenshots under `train/assets`. It does not depend on the inaccurate OCR
 model in `ocr`; instead it loads a Go template model generated from labelled
-screenshots. The default model is embedded from `models/soul_ocr_model.gob`, so
-normal recognition does not retrain from `assets` on startup.
+screenshots. The default model is embedded from `recognize/models/soul_ocr_model.gob`,
+so recognition neither contains the labelled training set nor reads training images.
 
 ## Usage
 
-Show supported commands, parameters, and examples:
+Show each program's parameters:
 
 ```powershell
-go run . help
-go run . help recognize
-go run . help export-model
+go run .\train -h
+go run .\recognize -h
 ```
 
-The built binary uses the same commands:
+Build the programs separately:
 
 ```powershell
-.\ocr_soul.exe help
-.\ocr_soul.exe recognize -input assets
+go build -o train.exe .\train
+go build -o recognize.exe .\recognize
 ```
 
 ### Commands and parameters
 
 | Command | Purpose | Parameters |
 | --- | --- | --- |
-| `recognize` | Recognize a PNG file or every PNG in a directory and write JSON to stdout. This is the default command when the first argument is a flag. | `-input <file-or-dir>`: input PNG or directory, default `assets`.<br>`-model <file>`: optional template model path; empty value uses the embedded model. |
-| `export-model` | Rebuild the Go template model from labelled screenshots. | `-assets <dir>`: labelled screenshot directory, default `assets`.<br>`-model <file>`: output model path, default `models\soul_ocr_model.gob`. |
+| `recognize/` | Load a template model, recognize a PNG file or every PNG in a directory, and write JSON to stdout. | `-input <file-or-dir>`: input PNG or directory, default `test`.<br>`-model <file>`: optional template model path; empty value uses the embedded model. |
+| `train/` | Rebuild the Go template model from labelled screenshots. | `-assets <dir>`: labelled screenshot directory, default `train\assets`.<br>`-model <file>`: output model path, default `recognize\models\soul_ocr_model.gob`. |
 
 General forms:
 
 ```powershell
-go run . [recognize] [flags]
-go run . recognize [flags] [image-or-dir]
-go run . export-model [flags]
-go run . help [command]
+go run .\recognize [flags] [image-or-dir]
+go run .\train [flags]
 ```
 
-Recognize every PNG in `assets` with the embedded model:
+Recognize every PNG in `test` with the embedded model:
 
 ```powershell
-go run . recognize -input assets
+go run .\recognize -input test
 ```
 
 Recognize one image:
 
 ```powershell
-go run . recognize -input assets\MuMu-20260708-142607-072.png
+go run .\recognize -input test\MuMu-20260708-165639-194.png
 ```
 
 The input path may also be passed positionally after `recognize`:
 
 ```powershell
-go run . recognize assets\MuMu-20260708-142607-072.png
-```
-
-The old shorthand is still supported and also uses the embedded model:
-
-```powershell
-go run . -input assets
+go run .\recognize test\MuMu-20260708-165639-194.png
 ```
 
 Use an explicit model file:
 
 ```powershell
-go run . recognize -model models\soul_ocr_model.gob -input assets
+go run .\recognize -model recognize\models\soul_ocr_model.gob -input test
 ```
 
 Export a new Go template model from the labelled screenshots:
 
 ```powershell
-go run . export-model -assets assets -model models\soul_ocr_model.gob
+go run .\train -assets train\assets -model recognize\models\soul_ocr_model.gob
 ```
 
 ## Output
@@ -142,6 +139,4 @@ initial value. For example, `Lv.3 -> Lv.3` with a main stat of `19.00%` outputs
 go test ./...
 ```
 
-The tests assert exact recognition for all provided screenshots, verify the
-exported model can be loaded, and verify the embedded model can recognize
-position and level data without rebuilding templates from `assets`.
+The tests verify that the exported model can be loaded and used for recognition.
