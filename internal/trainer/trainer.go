@@ -43,7 +43,7 @@ type SelectedAttribute struct {
 }
 
 func TrainSelected(assetsDir string, samples []SelectedSoul, base *ocr.TemplateModel) (*ocr.TemplateModel, error) {
-	model := &ocr.TemplateModel{Version: 3, Kind: "selected"}
+	model := &ocr.TemplateModel{Version: 4, Kind: "selected-v2"}
 	// Reuse the complete soul catalogue; selected screenshots only refine their own layout.
 	model.SoulTypeTemplates = append(model.SoulTypeTemplates, base.SoulTypeTemplates...)
 	seenLabels := map[string]bool{}
@@ -57,7 +57,7 @@ func TrainSelected(assetsDir string, samples []SelectedSoul, base *ocr.TemplateM
 			return nil, fmt.Errorf("load selected training image %s: %w", sample.File, err)
 		}
 		if sample.Position > 0 {
-			model.PositionTemplates = append(model.PositionTemplates, ocr.PositionTemplate{Position: sample.Position, Mask: ocr.SelectedPositionImageMask(img)})
+			model.PositionTemplates = append(model.PositionTemplates, ocr.PositionTemplate{Position: sample.Position, Mask: ocr.SelectedPositionTextMask(img)})
 		}
 		if sample.Level >= 0 {
 			model.LearnSelectedIntegerDigits(img, ocr.SelectedHeaderRect(img.Bounds()), sample.Level)

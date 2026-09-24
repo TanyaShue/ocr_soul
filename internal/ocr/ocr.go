@@ -321,7 +321,7 @@ func (m *TemplateModel) LearnSelectedIntegerDigits(img image.Image, rect Rect, v
 func (m *TemplateModel) LearnSelectedValueDigits(img image.Image, rect Rect, text string) {
 	comps := selectedValueComponents(crop(img, rect))
 	digits := digitRunes(text)
-	dot := findDot(comps)
+	dot := findSelectedDot(comps)
 	if len(digits) == 0 || dot < 0 {
 		return
 	}
@@ -465,21 +465,21 @@ func (r *Recognizer) Recognize(img image.Image) ([]SoulResult, error) {
 }
 
 var selectedRows = []Rect{
-	{604, 304, 894, 337},
-	{604, 337, 894, 370},
-	{604, 370, 894, 403},
-	{604, 403, 894, 436},
-	{604, 436, 894, 469},
+	{604, 328, 894, 355},
+	{604, 363, 894, 390},
+	{604, 396, 894, 423},
+	{604, 429, 894, 456},
+	{604, 462, 894, 489},
 }
 
 func SelectedHeaderRect(bounds image.Rectangle) Rect {
-	return scaleRect(bounds, Rect{680, 216, 892, 292})
+	return scaleRect(bounds, Rect{680, 252, 892, 328})
 }
 func SelectedIconRect(bounds image.Rectangle) Rect {
-	return scaleRect(bounds, Rect{606, 219, 678, 291})
+	return scaleRect(bounds, Rect{606, 251, 678, 323})
 }
-func SelectedPositionImageMask(img image.Image) BinaryImage {
-	return positionColorMask(crop(img, scaleRect(img.Bounds(), Rect{584, 207, 704, 317})))
+func SelectedPositionTextMask(img image.Image) BinaryImage {
+	return selectedPositionTextMask(crop(img, scaleRect(img.Bounds(), Rect{606, 204, 674, 226})))
 }
 func SelectedRowRect(bounds image.Rectangle, row int) Rect {
 	return scaleRect(bounds, selectedRows[row])
@@ -491,13 +491,20 @@ func SelectedLabelImageMask(img image.Image) BinaryImage { return selectedTextMa
 func SelectedValueRect(row Rect) Rect                    { return selectedValueRect(row) }
 
 func (r *Recognizer) RecognizeSelected(img image.Image) (*SelectedSoulResult, error) {
+	positionMask := SelectedPositionTextMask(img)
+	if positionMask.Count() < 10 {
+		return nil, nil
+	}
+	position := r.recognizeSelectedPositionMask(positionMask)
+	if position == 0 {
+		return nil, nil
+	}
 	mainRow := SelectedRowRect(img.Bounds(), 0)
 	mainName := r.recognizeSelectedLabel(crop(img, selectedLabelRect(mainRow)))
 	mainValue := normalizeAttributeValue(mainName, r.recognizeSelectedValue(crop(img, selectedValueRect(mainRow))))
-	level := r.recognizeSelectedInteger(crop(img, SelectedHeaderRect(img.Bounds())))
-	// At level 0 the UI omits the "+0" suffix, so title glyphs can look like a
-	// plus sign and produce a spurious level. The main stat value is deterministic
-	// for each stat and level; use it to recover the level whenever possible.
+	// The v2 panel shows the slot number in its header and no longer displays
+	// the soul level. Infer level from the deterministic main stat when possible.
+	level := 0
 	if inferred, ok := selectedLevelFromMainValue(mainName, mainValue); ok {
 		level = inferred
 	}
@@ -506,7 +513,7 @@ func (r *Recognizer) RecognizeSelected(img image.Image) (*SelectedSoulResult, er
 	}
 	result := &SelectedSoulResult{
 		Type:       r.recognizeSoulTypeFromRect(img, SelectedIconRect(img.Bounds())),
-		Position:   r.recognizePositionMask(SelectedPositionImageMask(img)),
+		Position:   position,
 		Level:      level,
 		Attributes: SelectedAttributes{Main: SelectedAttributeValue{Name: mainName, Value: mainValue}},
 	}
@@ -635,7 +642,7 @@ func selectedValueRect(row Rect) Rect {
 }
 
 func hasSelectedValueMarker(img image.Image, row Rect) bool {
-	return findDot(selectedValueComponents(crop(img, selectedValueRect(row)))) >= 0
+	return findSelectedDot(selectedValueComponents(crop(img, selectedValueRect(row)))) >= 0
 }
 
 func stringPointer(value string) *string {
@@ -864,7 +871,7 @@ func (r *Recognizer) recognizeSelectedInteger(img image.Image) int {
 
 func (r *Recognizer) recognizeSelectedValue(img image.Image) string {
 	comps := selectedValueComponents(img)
-	dot := findDot(comps)
+	dot := findSelectedDot(comps)
 	if dot < 0 {
 		return ""
 	}
@@ -904,6 +911,22 @@ func (r *Recognizer) recognizePositionMask(mask BinaryImage) int {
 			bestScore = score
 			bestPosition = tmpl.Position
 		}
+	}
+	return bestPosition
+}
+
+func (r *Recognizer) recognizeSelectedPositionMask(mask BinaryImage) int {
+	bestPosition := 0
+	bestScore := math.MaxFloat64
+	for _, tmpl := range r.PositionTemplates {
+		score := maskDistance(mask, tmpl.Mask)
+		if score < bestScore {
+			bestScore = score
+			bestPosition = tmpl.Position
+		}
+	}
+	if bestScore > 0.55 {
+		return 0
 	}
 	return bestPosition
 }
@@ -1022,6 +1045,20 @@ func findDot(comps []Component) int {
 		w := c.X1 - c.X0
 		h := c.Y1 - c.Y0
 		if w <= 4 && h <= 5 && c.Area <= 10 && c.Y0 > 14 {
+			if best < 0 || c.X0 < comps[best].X0 {
+				best = i
+			}
+		}
+	}
+	return best
+}
+
+func findSelectedDot(comps []Component) int {
+	best := -1
+	for i, c := range comps {
+		w := c.X1 - c.X0
+		h := c.Y1 - c.Y0
+		if w <= 4 && h <= 5 && c.Area <= 10 && c.Y0 > 6 {
 			if best < 0 || c.X0 < comps[best].X0 {
 				best = i
 			}
@@ -1275,6 +1312,13 @@ func selectedTextMask(img image.Image) BinaryImage {
 		dark := r < 145 && g < 130 && b < 115
 		red := r > 135 && g < 115 && b < 90 && r > g+35
 		return dark || red
+	})
+}
+
+func selectedPositionTextMask(img image.Image) BinaryImage {
+	return makeMask(img, func(c color.Color) bool {
+		r, g, b := rgb(c)
+		return r > 100 && r < 165 && g > 90 && g < 150 && b < 140
 	})
 }
 

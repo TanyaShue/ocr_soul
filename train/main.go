@@ -4,10 +4,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	ocr "ocr_soul/internal/ocr"
 	"ocr_soul/internal/trainer"
-	"ocr_soul/train/selecteddata"
+	"ocr_soul/train/selectedv2data"
 	"ocr_soul/train/trainingdata"
 )
 
@@ -30,7 +31,7 @@ func main() {
 		if loadErr != nil {
 			err = fmt.Errorf("load upgrade model for complete soul types: %w", loadErr)
 		} else {
-			model, err = trainer.TrainSelected(*assetsDir+"/selected", selecteddata.Samples, base)
+			model, err = trainer.TrainSelected(filepath.Join(*assetsDir, "selected-v2"), selectedv2data.Samples, base)
 		}
 	default:
 		err = fmt.Errorf("unknown model type %q; use upgrade or selected", *recognitionType)

@@ -59,7 +59,7 @@ func TestSelectedModelAndRecognition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	img, err := LoadPNG(filepath.Join(root, "train", "assets", "selected", "MuMu-20260731-100340-830.png"))
+	img, err := LoadPNG(filepath.Join(root, "train", "assets", "selected-v2", "MuMu-20260924-184447-961.png"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,10 @@ func TestSelectedModelAndRecognition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Type != "招财猫" || got.Level != 3 || got.Attributes.Main.Name != "防御加成" || got.Attributes.Main.Value != "19.00%" || len(got.Attributes.Subs) != 4 {
+	if got == nil {
+		t.Fatal("want a recognized selected soul")
+	}
+	if got.Type != "海月火玉" || got.Position != 4 || got.Attributes.Main.Name != "生命加成" || got.Attributes.Main.Value != "10.00%" {
 		t.Fatalf("unexpected selected soul: %+v", got)
 	}
 }

@@ -83,13 +83,15 @@ Train and use the selected-soul model:
 
 ```powershell
 go run .\train -type selected
-go run .\recognize -type selected -input train\assets\selected
+go run .\recognize -type selected -input train\assets\selected-v2
 ```
 
 The selected model inherits the complete soul-type catalogue from the upgrade
-model, then adds selected-panel samples. Its screenshots live under
-`train/assets/selected`, with labels in `train/selecteddata`, so either model can
-be improved independently.
+model, then adds selected-panel samples. The active dataset is
+`train/assets/selected-v2`, labelled in `train/selectedv2data`. The v2 panel
+prints the slot as Chinese text (for example, `贰号位`); training and recognition
+use that text to determine the position. The older `train/assets/selected` data
+is not used by the selected training command.
 
 ## Output
 

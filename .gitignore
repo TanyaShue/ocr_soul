@@ -1,0 +1,7 @@
+# Local recognizer build outputs
+/recognize.exe
+/recognize-v2.exe
+
+# These manual-test copies are already present in train/assets/selected-v2.
+/test/MuMu-20260924-184447-961.png
+/test/MuMu-20260924-184900-178.png
