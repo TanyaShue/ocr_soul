@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -494,6 +495,12 @@ func (r *Recognizer) RecognizeSelected(img image.Image) (*SelectedSoulResult, er
 	mainName := r.recognizeSelectedLabel(crop(img, selectedLabelRect(mainRow)))
 	mainValue := normalizeAttributeValue(mainName, r.recognizeSelectedValue(crop(img, selectedValueRect(mainRow))))
 	level := r.recognizeSelectedInteger(crop(img, SelectedHeaderRect(img.Bounds())))
+	// At level 0 the UI omits the "+0" suffix, so title glyphs can look like a
+	// plus sign and produce a spurious level. The main stat value is deterministic
+	// for each stat and level; use it to recover the level whenever possible.
+	if inferred, ok := selectedLevelFromMainValue(mainName, mainValue); ok {
+		level = inferred
+	}
 	if expected := selectedMainValue(mainName, level); expected != "" {
 		mainValue = expected
 	}
@@ -520,6 +527,29 @@ func (r *Recognizer) RecognizeSelected(img image.Image) (*SelectedSoulResult, er
 		result.Attributes.Subs = append(result.Attributes.Subs, SelectedAttributeValue{Name: name, Value: value})
 	}
 	return result, nil
+}
+
+func selectedLevelFromMainValue(name, value string) (int, bool) {
+	if value == "" {
+		return 0, false
+	}
+	percent := strings.HasSuffix(value, "%")
+	value = strings.TrimSuffix(value, "%")
+	n, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 0, false
+	}
+	for level := 0; level <= 15; level++ {
+		expected := strings.TrimSuffix(selectedMainValue(name, level), "%")
+		e, err := strconv.ParseFloat(expected, 64)
+		if err != nil {
+			continue
+		}
+		if percent == strings.HasSuffix(selectedMainValue(name, level), "%") && math.Abs(n-e) < 0.001 {
+			return level, true
+		}
+	}
+	return 0, false
 }
 
 func selectedMainValue(name string, level int) string {

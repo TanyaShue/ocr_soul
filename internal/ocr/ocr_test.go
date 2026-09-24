@@ -71,3 +71,25 @@ func TestSelectedModelAndRecognition(t *testing.T) {
 		t.Fatalf("unexpected selected soul: %+v", got)
 	}
 }
+
+func TestSelectedLevelFromMainValue(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  int
+	}{
+		{name: "速度", value: "12.00", want: 0},
+		{name: "速度", value: "15.00", want: 1},
+		{name: "攻击加成", value: "28.00%", want: 6},
+		{name: "攻击", value: "162.00", want: 3},
+	}
+	for _, tt := range tests {
+		got, ok := selectedLevelFromMainValue(tt.name, tt.value)
+		if !ok || got != tt.want {
+			t.Errorf("selectedLevelFromMainValue(%q, %q) = %d, %v; want %d, true", tt.name, tt.value, got, ok, tt.want)
+		}
+	}
+	if _, ok := selectedLevelFromMainValue("速度", "13.00"); ok {
+		t.Error("unexpected level for invalid speed main value")
+	}
+}
