@@ -35,6 +35,17 @@ go build -o train.exe .\train
 go build -o recognize.exe .\recognize
 ```
 
+## GitHub Releases
+
+Push a version tag such as `v1.0.0` to build release binaries for Windows,
+Linux, and macOS on amd64 and arm64. The GitHub Actions workflow publishes both
+`recognize` and `train` binaries as assets in the matching GitHub Release.
+
+```sh
+git tag v1.0.0
+git push origin v1.0.0
+```
+
 ### Commands and parameters
 
 | Command | Purpose | Parameters |
